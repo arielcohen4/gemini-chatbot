@@ -27,14 +27,15 @@ import { PurchaseTickets } from '@/components/flights/purchase-ticket'
 import { CheckIcon, SpinnerIcon } from '@/components/ui/icons'
 import { format } from 'date-fns'
 import { experimental_streamText } from 'ai'
-import { google } from 'ai/google'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { z } from 'zod'
 import { ListHotels } from '@/components/hotels/list-hotels'
 import { Destinations } from '@/components/flights/destinations'
 import { Video } from '@/components/media/video'
 import { rateLimit } from './ratelimit'
-
+import { openai } from '@ai-sdk/openai'
+import duffel from '@/lib/duffel/client'
+import { Offer } from '@duffel/api/types'
 const genAI = new GoogleGenerativeAI(
   process.env.GOOGLE_GENERATIVE_AI_API_KEY || ''
 )
@@ -162,7 +163,7 @@ async function submitUserMessage(content: string) {
   ;(async () => {
     try {
       const result = await experimental_streamText({
-        model: google.generativeAI('models/gemini-1.0-pro-001'),
+        model: openai.chat('gpt-4'),
         temperature: 0,
         tools: {
           listDestinations: {
@@ -181,25 +182,28 @@ async function submitUserMessage(content: string) {
             description:
               "List available flights in the UI. List 3 that match user's query.",
             parameters: z.object({
-              departingCity: z.string(),
-              arrivalCity: z.string(),
-              departingAirport: z.string().describe('Departing airport code'),
-              arrivalAirport: z.string().describe('Arrival airport code'),
+              departingCityOrAirport: z
+                .string()
+                .describe(
+                  "The 3-letter IATA code for the city or airport where this slice starts. For example if the user asks 'paris to berlin in the 23 may' so you should return 'PAR' because the user search a city for an airport, for example for the user asks 'jfk to berlin in the 23 may' you should return 'JFK'"
+                ),
+              arrivalCityOrAirport: z
+                .string()
+                .describe(
+                  "The 3-letter IATA code for the city or airport where this slice ends. For example if the user asks 'paris to berlin in the 23 may' so you should return 'BER' because the user search a city for an airport, for example for the user asks 'berlin to jfk in the 23 may' you should return 'JFK'"
+                ),
               date: z
                 .string()
                 .describe(
-                  "Date of the user's flight, example format: 6 April, 1998"
+                  "The ISO 8601 date on which the passengers want to depart Example: '2020-04-24'"
                 )
             })
           },
           showSeatPicker: {
             description:
-              'Show the UI to choose or change seat for the selected flight.',
+              'Show the UI to choose or change seat for the selected offer id.',
             parameters: z.object({
-              departingCity: z.string(),
-              arrivalCity: z.string(),
-              flightCode: z.string(),
-              date: z.string()
+              offerId: z.string()
             })
           },
           showHotels: {
@@ -246,14 +250,14 @@ async function submitUserMessage(content: string) {
         },
         system: `\
       You are a friendly assistant that helps the user with booking flights to destinations that are based on a list of books. You can you give travel recommendations based on the books, and will continue to help the user book a flight to their destination.
-  
       The date today is ${format(new Date(), 'd LLLL, yyyy')}. 
-      The user's current location is San Francisco, CA, so the departure city will be San Francisco and airport will be San Francisco International Airport (SFO). The user would like to book the flight out on May 12, 2024.
-
-      List United Airlines flights only.
       
       Here's the flow: 
-        1. List holiday destinations based on a collection of books.
+        1. Before you show flights to the user. You have to gather all this information from the user:
+          a. Origin city or airport
+          b. Destination city or airport
+          b. The date of the flight
+          d. It that a one way or a roundtrip
         2. List flights to destination.
         3. Choose a flight.
         4. Choose a seat.
@@ -338,9 +342,29 @@ async function submitUserMessage(content: string) {
               ]
             })
 
+            // create an offer request for a flight departing tomorrow
+            const offerRequestsResponse = await duffel.offerRequests.create({
+              slices: [
+                {
+                  origin: args.departingCityOrAirport,
+                  destination: args.arrivalCityOrAirport,
+                  departure_date: args.date
+                }
+              ],
+              passengers: [{ age: 21 }],
+              return_offers: false
+            })
+
+            // retrieve the cheapest offer
+            const offersResponse = await duffel.offers.list({
+              offer_request_id: offerRequestsResponse.data.id,
+              sort: 'total_amount',
+              limit: 6
+            })
+
             uiStream.update(
               <BotCard>
-                <ListFlights summary={args} />
+                <ListFlights offers={offersResponse.data as Offer[]} />
               </BotCard>
             )
           } else if (toolName === 'showSeatPicker') {
@@ -364,9 +388,14 @@ async function submitUserMessage(content: string) {
               ]
             })
 
+            // retrieve the cheapest offer
+            const seatmapResponse = await duffel.seatMaps.get({
+              offer_id: args.offerId
+            })
+
             uiStream.update(
               <BotCard>
-                <SelectSeats summary={args} />
+                <SelectSeats summary={args} seatMap={seatmapResponse.data[0]} />
               </BotCard>
             )
           } else if (toolName === 'showHotels') {
