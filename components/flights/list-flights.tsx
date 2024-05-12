@@ -4,7 +4,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useActions, useUIState } from 'ai/rsc'
-import { Offer } from '@duffel/api/types'
+import { Offer, Places } from '@duffel/api/types'
 
 export const ListFlights = ({ offers }: { offers: Offer[] }) => {
   const { submitUserMessage } = useActions()
@@ -60,13 +60,13 @@ export const ListFlights = ({ offers }: { offers: Offer[] }) => {
         <div className="sm:basis-1/4">
           <div className="text-xs text-zinc-600">Departure</div>
           <div className="font-medium">
-            {offers[0].slices[0].origin.city_name}
+            {(offers[0].slices[0].origin as Places).city_name}
           </div>
         </div>
         <div className="sm:basis-1/4">
           <div className="text-xs text-zinc-600">Arrival</div>
           <div className="font-medium">
-            {offers[0].slices[0].destination.city_name}
+            {(offers[0].slices[0].destination as Places).city_name}
           </div>
         </div>
         <div className="sm:basis-1/2">
@@ -94,7 +94,7 @@ export const ListFlights = ({ offers }: { offers: Offer[] }) => {
             >
               <div className="w-10 sm:w-12 shrink-0 aspect-square rounded-lg bg-zinc-50 overflow-hidden">
                 <img
-                  src={offer.owner.logo_symbol_url}
+                  src={offer.owner.logo_symbol_url || undefined}
                   className="object-cover aspect-square"
                   alt="airline logo"
                 />
